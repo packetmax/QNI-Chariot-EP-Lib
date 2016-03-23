@@ -26,17 +26,19 @@ coap://chariot.c350e.local/arduino/analog?put&pin=13&val=128    -> analogWrite(2
 static uint8_t triggerState = OFF;
 static bool    isTriggered = false;
 static uint8_t triggerFunc = GT;
-static float   triggerVal = 30.0;
+static float   triggerVal = 35.0;
 static float   triggerCalOffset = -3.0;
 static int     triggerPeriod = 1;
 static int     triggerTimeUnit = SECONDS;
 static unsigned long triggerChkTime;     // Holds the next check time.
+String triggerValStr = "{\"ID\":\"Trigger\",\"Triggered\":\"No\",\"State\":\"On\"}";
 
 // Resource creation yields positive handle
 static int eventHandle = -1;
 
-void triggerPutCallback(String& param); // RESTful PUTs on this URI come here.
+String * triggerPutCallback(String& param); // RESTful PUTs on this URI come here.
 bool triggerCreate();
+void sendPutResult(String& result);
 
 void inline resetTriggerTime() 
 {
@@ -57,6 +59,9 @@ void setup() {
   //---Create event trigger---
   if (triggerCreate()) {
     Serial.println(F("Setup complete."));
+  } else {
+    Serial.println(F("Setup failed-trigger not created. Exiting..."));
+    exit(-1);
   }
 
   resetTriggerTime();
@@ -89,7 +94,6 @@ void loop() {
       ChariotEP.triggerResourceEvent(eventHandle, triggeredVal, true); 
     }
   }
-  
   delay(50);
 }
 
@@ -103,10 +107,14 @@ bool triggerCreate()
   String attr = "title=\"Trigger\?get|obs|put\"";
   String eventVal = "{\"ID\":\"Trigger\",\"Triggered\":\"No\",\"State\":\"Off\"}";
   
-  if ((eventHandle = ChariotEP.createResource(trigger, 63, attr)) >= 0)   // create resource on Chariot
+  if ((eventHandle = ChariotEP.createResource(trigger, 63, attr)) >= 0)  // create resource on Chariot
   {
-    ChariotEP.triggerResourceEvent(eventHandle, eventVal, true);        // set its initial condition (JSON)
-    ChariotEP.setPutHandler(eventHandle, triggerPutCallback);             // set RESTful PUT handler
+    if (ChariotEP.triggerResourceEvent(eventHandle, eventVal, true)){     // set its initial condition (JSON)
+      ChariotEP.setPutHandler(eventHandle, triggerPutCallback);           // set RESTful PUT handler
+    } else {
+      Serial.println(F("Error creating trigger!"));
+      return false;
+    }
     return true;
   } 
   
@@ -149,67 +157,88 @@ bool triggerOnOff(bool onOffSwitch)
  *   "name and val" are strings that consist of just about any 
  *   characters other than '='.
  */
-void triggerPutCallback(String& param)
+String * triggerPutCallback(String& param)
 {
   String Name, Value;
+  String result;
+  String *putStore = NULL;
 
   Name = param.substring(0, param.indexOf('='));
-  Value = param.substring(param.indexOf('=')+1, '\r');
+  Value = param.substring(param.indexOf('=')+1, param.indexOf('\r')-2);
 
   if (Name == "triggerval") 
   {
     triggerVal = (float)Value.toInt();
-    goto changeNotification;
+    goto complete_put;
   }
 
    if (Name == "caloffset") 
    {
     triggerCalOffset = (float)Value.toInt();
-    goto changeNotification;
+    goto complete_put;
   }
 
   if (Name == "state") 
   {
     if (Value == "on") {
       // Reset trigger state.
-      String triggerVal = "{\"ID\":\"Trigger\",\"Triggered\":\"No\",\"State\":\"On\"}";
-      ChariotEP.triggerResourceEvent(eventHandle, triggerVal, true);
       triggerOnOff(true);
-      return;
-    } else if (Value == "off") {  // Preserve trigger state.
+      isTriggered = false;
+      triggerValStr = "{\"ID\":\"Trigger\",\"Triggered\":\"No\",\"State\":\"On\"}";
+      putStore = &triggerValStr;
+      goto complete_put; 
+    } 
+    else if (Value == "off") 
+    { // Preserve trigger state.
       triggerOnOff(false);
-    } else {
+      triggerValStr = "{\"ID\":\"Trigger\",\"Triggered\":\"No\",\"State\":\"Off\"}";
+      putStore = &triggerValStr;
+      goto complete_put; 
+    } 
+    else {
       void badInput(String param);
       badInput(param);
-      return;
+      return NULL;
     }
-    goto changeNotification;
   }
 
   if (Name == "fetch") {
-    void triggerFetch();
+    void triggerFetch(); // Writes trigger vars to requestor
     triggerFetch();
-    return;
+    return NULL;
   }
 
   if (Name == "func") {
     if (Value == "lt") {
      triggerFunc = LT;
+     goto complete_put; 
     } else if (Value == "gt") {
       triggerFunc = GT;
+      goto complete_put; 
     } else {
       badInput(param);
-      return;
+      return NULL;
     }
   }
 
-changeNotification:
-  // Valid param and value exit
-  String changedParam = "2.04 PARAMETER(" + param + ")" + " CHANGED";
-  changedParam += "\n\0";
-  ChariotClient.print(changedParam);
+complete_put:
+  result = Name;
+  result += " now set to ";
+  result += Value;
+  // PUT callbacks MUST provide this to complete the operation.
+  sendPutResult(result); 
+  return putStore;
 }
 
+/*
+ * Complete PUT by returning result payload to requestor.
+ */
+void sendPutResult(String& result)
+{
+  result += "\n\0";
+  ChariotClient.print(result);
+  return;
+}
 /*
  * Param not understood
  */
@@ -241,7 +270,7 @@ void triggerFetch() {
   }
 
   statusJSON += "\"TriggerVal\":" + String(triggerVal) + ","; 
-  statusJSON += "\"CalOffset\":" + String(triggerCalOffset) + ",";
+  statusJSON += "\"CalOffset\":" + String(triggerCalOffset) + "}";
 
   statusJSON += "\n\0";
   ChariotClient.print(statusJSON);

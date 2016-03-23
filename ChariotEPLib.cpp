@@ -7,11 +7,9 @@
  
 #include "ChariotEPLib.h"
 
-#if LEONARDO_HOST
+#if UNO_HOST==1 || LEONARDO_HOST==1
 	SoftwareSerial ChariotClient(RX_PIN, TX_PIN);
-#elif UNO_HOST
-	SoftwareSerial ChariotClient(RX_PIN,  TX_PIN);
-#elif MEGA_DUE_HOST
+#elif MEGA_DUE_HOST==1
 
 #else
 	#error Board type not supported by Chariot at this time--contact Tech Support.
@@ -31,6 +29,7 @@ ChariotEPClass::~ChariotEPClass()
 boolean ChariotEPClass::begin() 
 {	
 #if LEONARDO_HOST
+#error Leonardo has been discontinued and is not support by Chariot
 	pinMode(RX_PIN, INPUT);
 	pinMode(TX_PIN, OUTPUT);
 	arduinoType	= LEONARDO;
@@ -65,19 +64,20 @@ boolean ChariotEPClass::begin()
 		Serial.print(".");
 	}
 	Serial.println(F("...Chariot online"));
-	
-	// Read Chariot startup response.
-	if (!ChariotClient.available()) {
-		chariotSignal(RSRC_EVENT_INT_PIN);
-	}
-	coapResponse();	
-	chariotAvailable = true;
-	
+		
 	// Take Chariot's temp at startup and display.
 	Serial.print(F("\nSystem temp at startup: "));
 	Serial.print(readTMP275(CELSIUS), 2);
 	Serial.println('C');
 	Serial.println();
+	
+	// Ask for Chariot startup response.
+	if (!ChariotClient.available()) {
+		ChariotClient.print("sys/status<\n\0");
+		Serial.println(F("...Requesting Chariot system status"));
+	}
+	chariotPrintResponse();	
+	chariotAvailable = true;
 
 	// initialize vent resources--these are stored in Chariot
 	nextRsrcId = 0;
@@ -114,7 +114,7 @@ int ChariotEPClass::getIdFromURI(String& uri)
 	return -1;
 }
 
-int ChariotEPClass::setPutHandler(int handle, void (*putCallback)(String& putCmd))
+int ChariotEPClass::setPutHandler(int handle, String * (*putCallback)(String& putCmd))
 {
 	if ((putCallback == NULL) || (handle < 0) || (handle > (nextRsrcId-1))) {
 		return -1;
@@ -159,16 +159,19 @@ int ChariotEPClass::createResource(String& uri, uint8_t bufLen, String& attrib)
 	while (ChariotClient.available() == 0) ;  // wait on response
 	// Parse this for result of last resource operation
 	String input = ChariotClient.readStringUntil('\r');
-	input.remove(input.indexOf("<<"), 2);
+	int terminator = input.indexOf("<<");
+	if (terminator != -1)
+		input.remove(terminator, 2);
 	Serial.print(input);
-
-	if (!(input.length() >= 20) || !input.startsWith("chariot/2.01 CREATED", 0))
+	
+	int goodResponse = input.indexOf("chariot/2.01 CREATED");
+	if (goodResponse == -1)
 	{ 
 		nextRsrcId--;
 		return -1;
 	}
 	
-	Serial.print(F("    "));
+	Serial.print(F("  "));
 	Serial.println(uri);
 	return rsrcNbr;
 }
@@ -198,7 +201,7 @@ int ChariotEPClass::createResource(const __FlashStringHelper* uri, uint8_t bufLe
 	rsrcString += String(uri);
 	rsrcString += "%attr=";
 	rsrcString += String(attrib);
-	rsrcString += "\n\0";
+	rsrcString += "<\n\0";
 
 	rsrcChariotBufSizes[rsrcNbr] = min(bufLen, MAX_BUFLEN);
 	   
@@ -208,7 +211,9 @@ int ChariotEPClass::createResource(const __FlashStringHelper* uri, uint8_t bufLe
 	while (ChariotClient.available() == 0) ;  // wait on coap response
 	// Parse this for result of last resource operation
 	String input = ChariotClient.readStringUntil('\r');
-	input.remove(input.indexOf("<<"), 2);
+	int terminator = input.indexOf("<<");
+	if (terminator != -1)
+		input.remove(terminator, 2);
 	Serial.print(input);
 
 	if (!(input.length() >= 20) || !input.startsWith("chariot/2.01 CREATED", 0))
@@ -225,9 +230,13 @@ int ChariotEPClass::createResource(const __FlashStringHelper* uri, uint8_t bufLe
 bool ChariotEPClass::triggerResourceEvent(int handle, String& eventVal, bool signalChariot)
 {
 	String ev = "";
+	String chariotResponse = "";
 	
-	if ((handle < 0) || (handle > (nextRsrcId-1)))
+	if ((handle < 0) || (handle > (nextRsrcId-1))) {
+		Serial.print(F("Bad handle: "));
+		Serial.println(handle);
 		return false;
+	}
 		
 	ev = "rsrc=";
 	ev += handle;
@@ -235,65 +244,49 @@ bool ChariotEPClass::triggerResourceEvent(int handle, String& eventVal, bool sig
 	ev += "value=";
 	ev += eventVal;
 	ev += "<\n\0";
-	if (ev.length() > rsrcChariotBufSizes[handle])
+	if (ev.length() > rsrcChariotBufSizes[handle]) {
+		Serial.print(F("triggerResourceEvent: "));
+		Serial.print(ev);
+		Serial.print(F(" of length: "));
+		Serial.print(ev.length());
+		Serial.print(F(" exceeds allowable length of: "));
+		Serial.println(rsrcChariotBufSizes[handle]);
 		return false;
-		
-	ChariotClient.print(ev); 
-	if (signalChariot) {
-		chariotSignal(RSRC_EVENT_INT_PIN); 
 	}
+	// Send Chariot the resource state change
+	ChariotClient.print(ev); 
 	
 	while (ChariotClient.available() == 0) ;  // wait on response
-	// Parse this for result of last resource operation
-	String input = ChariotClient.readStringUntil('\r');
-	input.remove(input.indexOf("<<"), 2);
-	Serial.print(input);
+	// Parse response for result of last resource operation
+	if (ChariotClient.available()) {
+		chariotResponse = ChariotClient.readStringUntil('\r');
+		int terminator = chariotResponse.indexOf("<<");
+		if (terminator != -1)
+			chariotResponse.remove(terminator, 2);
+	} else {
+		Serial.println(F("No response from Chariot"));
+		return false;
+	}
 
-	if (!(input.length() >= 20) || !input.startsWith("chariot/2.01 CREATED", 0))
+	int goodResponse = chariotResponse.indexOf("CREATED");
+	if (goodResponse == -1)
 	{ 
-		Serial.println();
+		Serial.print(F("Chariot response indicates an error. handle = "));
+		Serial.println(handle);
+		Serial.print(F(" string to Chariot = "));
+		Serial.println(ev);
+		Serial.print(F("signal = "));
+		Serial.println(signalChariot);
+		Serial.print(F("response from Chariot = "));
+		Serial.println(chariotResponse);
+		Serial.print(F("len = "));
+		Serial.println(chariotResponse.length());
 		return false;
 	}
-	
-	Serial.print(F("    "));
-	Serial.println(ev);
-	return true;
-}
-
-bool ChariotEPClass::triggerResourceEvent(int handle, const __FlashStringHelper* eventVal, bool signalChariot)
-{
-	String ev = "";
-	
-	if ((handle < 0) || (handle > (nextRsrcId-1)))
-		return false;
-		
-	ev = "rsrc=";
-	ev += handle;
-	ev += "%";
-	ev += "value=";
-	ev += String(eventVal);
-	ev += "<\n\0";
-	if (ev.length() > rsrcChariotBufSizes[handle])
-		return	false;
-		
-	ChariotClient.print(ev); 
+	// Signal Chariot to notify all subscribers
 	if (signalChariot) {
 		chariotSignal(RSRC_EVENT_INT_PIN); 
 	}
-	
-	while (ChariotClient.available() == 0) ;  // wait on response
-	// Parse this for result of last resource operation
-	String input = ChariotClient.readStringUntil('\r');
-	input.remove(input.indexOf("<<"), 2);
-	Serial.print(input);
-
-	if (!(input.length() >= 20) || !input.startsWith("chariot/2.01 CREATED", 0)) {
-		Serial.println();
-		return false;
-	}
-	
-	Serial.print(F("    "));
-	Serial.println(ev);	
 	return true;
 }
 
@@ -301,68 +294,112 @@ bool ChariotEPClass::triggerResourceEvent(int handle, const __FlashStringHelper*
 void ChariotEPClass::process() 
 {
   // read the command--terminate with '\n'
-  String command = ChariotClient.readStringUntil('/');
+  String command = ChariotClient.readStringUntil('\0');
+  bool validCmd;
+  
+  validCmd = command.startsWith(F("arduino/"), 0);
+  if (!validCmd) {
+	validCmd = command.startsWith(F("event/"), 0);
+  }
+  
+  if (!validCmd) {
+	Serial.print(F("Unrecognized input from Chariot: "));
+	Serial.println(command);
+	return;
+  }
   
 #if EP_DEBUG 
   Serial.println(command);
 #endif
-  // is "digital" command?
-  if (command == F("digital")) {
-    digitalCommand();
-	return;
+  
+  if (command.startsWith(F("arduino/"), 0)) {
+	  command.remove(0, 8);
+	  
+	  // is "digital" command?
+	  if (command.startsWith(F("digital/"), 0)) {
+		command.remove(0, 8);
+		digitalCommand(command);
+		return; 
+	  }
+
+	  // is "analog" command?
+	  if (command.startsWith(F("analog/"), 0)) {
+		command.remove(0, 7);
+		analogCommand(command);
+		return; 
+	  }
+
+	  // is "mode" command?
+	  if (command.startsWith(F("mode/"), 0)) {
+		command.remove(0, 5);
+		modeCommand(command);
+		return; 
+	  }
+	  return;
   }
 
-  // is "analog" command?
-  else if (command == F("analog")) {
-    analogCommand();
-	return;
-  }
-
-  // is "mode" command?
-  else if (command == F("mode")) {
-    modeCommand();
-	return;
-  }
-
-  // is "put" parameters for event resource?
-  else if (command == F("event") && (ChariotClient.available())) {
-	command += "/"; // has to be put back into string
-    command += ChariotClient.readStringUntil('&');
-    
-	String param = "";
-	// Chariot only sends us qualified input--here we're tossing stuff we don't support in this lib vers
-	if (ChariotClient.available()) {
-		param = ChariotClient.readStringUntil('\r');
-	}
-	
-	int id;
-	id = getIdFromURI(command);
-	if ((id != -1) && (putCallbacks[id] != NULL) &&( param != ""))
-	{
-		putCallbacks[id](param);
-	}
-	return;
-  }
+  // is "put" of parameters for event resource?
+  else {
+	  int id = -1;
+	  String param = "";
+	  if (command.startsWith(F("event/"), 0) != -1) {
+		param = command;
+		
+		int paramStart = param.indexOf('&');
+		if (paramStart != -1) {
+			param.remove(0, paramStart+1);
+			param.trim();
+			command.remove(paramStart, command.length()-1);
+#if EP_DEBUG
   Serial.println(command);
+  Serial.println(param);
+#endif
+		} else {
+			Serial.println(F("PUT parameters did not arrive"));
+			Serial.println(command);
+			return;
+		}
+		
+		id = getIdFromURI(command);
+		if ((id != -1) && (putCallbacks[id] != NULL) &&( param != ""))
+		{
+			String *Str;
+			if ((Str = putCallbacks[id](param)) != NULL)
+			{
+				delay(250);
+				triggerResourceEvent(id, *Str, true);
+			}
+		}
+		return;
+	  } 
+	  else {
+		Serial.print(F("Command: "));
+		Serial.print(command);
+		Serial.print(F(" not understood. ID was: "));
+		Serial.println(id);
+		return;
+	  }
+  }
 }
 
-void ChariotEPClass::digitalCommand() {
+void ChariotEPClass::digitalCommand(String& command) {
   int pin, value;
   String response;
 
   // Read pin number
-  pin = ChariotClient.parseInt();
+  if (pinValParse(command, &pin, &value)) {
+  
 #if EP_DEBUG 
   Serial.print(F("pin="));
   Serial.println(pin, DEC);
 #endif
-  // If the next character is a '/' it means we have an URL
+
+  // If value is not -1 it means we have an URL
   // with a value like: "/digital/13/1"
-  if (ChariotClient.read() == '/') {
+  if (value >= 0) {
 #if EP_DEBUG 
     Serial.println(F("command is WRITE"));
 #endif
-    value = ChariotClient.parseInt();
     digitalWrite(pin, value);
   }
   else {
@@ -377,99 +414,108 @@ void ChariotEPClass::digitalCommand() {
   response += pin;
   response += " set to ";
   response += value;
-  response += "\n\0";
+  response += "<\n\0";
   ChariotClient.print(response);
+  
 #if EP_DEBUG 
   Serial.print(response);
 #endif
+  }
+  else { // Pin value not available.
+	Serial.print(F("digital command--pin values incorrect or missing. Pin = "));
+	Serial.print(pin);
+	Serial.print(F(" Value = "));
+	Serial.println(value);
+	Serial.println(F("Operation cancelled."));
+	// Return response
+	ChariotClient.print(F("Arduino could not complete digital pin request.<\n\0"));
+  }
 }
 
-void ChariotEPClass::analogCommand() {
+void ChariotEPClass::analogCommand(String& command) {
   int pin, value;
   String response;
 
   // Read pin number
-  pin = ChariotClient.parseInt();
+  if (pinValParse(command, &pin, &value)) {
+
 #if EP_DEBUG 
   Serial.print(F("pin="));
   Serial.println(pin, DEC);
 #endif
 
-  // If the next character is a '/' it means we have an URL
-  // with a value like: "/analog/5/120"
-  if (ChariotClient.read() == '/') {
+  // Write is requested with a value like: "/analog/5/120"
+	if (value >= 0) {
 #if EP_DEBUG 
-    Serial.println(F("command is WRITE"));
+		Serial.println(F("command is WRITE"));
 #endif
-    value = ChariotClient.parseInt();
-    analogWrite(pin, value);
-  }
-  else {
-    value = analogRead(pin);
+		analogWrite(pin, value);
+	}
+	else {
+		value = analogRead(pin);
 #if EP_DEBUG 
-    Serial.println(F("command is READ"));
+  Serial.println(F("command is READ"));
 #endif
-  }
+	}
 
-  // Send pin response to requestor
-  response = "Pin A";
-  response += pin;
-  response += " set to ";
-  response += value;
-  response += "\n\0";
-  ChariotClient.print(response);
+	// Send pin response to requestor
+	response = "Pin A";
+	response += pin;
+	response += " set to ";
+	response += value;
+	response += "<\n\0";
+	ChariotClient.print(response);
+  
 #if EP_DEBUG 
   Serial.print(response);
 #endif
+  } else { // Pin value not available.
+	Serial.print(F("analog command--pin values incorrect or missing. Pin = "));
+	Serial.print(pin);
+	Serial.print(F(" Value = "));
+	Serial.println(value);
+	Serial.println(F("Operation cancelled."));
+	// Return response
+	ChariotClient.print(F("Arduino could not complete analog pin request.<\n\0"));
+  }
 }
 
-void ChariotEPClass::modeCommand() {
-  int pin;
-  String response;
+void ChariotEPClass::modeCommand(String& command) {
+  int pin; int value;
+  String response, mode;
 
-  // Read pin number
-  pin = ChariotClient.parseInt();
+  // Read pin number and mode to set
+  if (pinValParse(command, &pin, &value)) {
+  
 #if EP_DEBUG 
   Serial.print(F("pin="));
   Serial.println(pin, DEC);
 #endif
 
-  // If the next character is not a '/' we have a malformed URL
-  if (ChariotClient.read() != '/') {
-    ChariotClient.println(F("Arduino remote error: malformed URI"));
-    return;
-  }
-
-  String mode = ChariotClient.readStringUntil('\r');
-
-  if (mode == F("input")) {
-#if EP_DEBUG 
-    Serial.println(F("command is INPUT"));
-#endif
+  if (value == INPUT) {
     pinMode(pin, INPUT);
-
-    // Send pin response to requestor
-    response = "Pin D";
-    response += pin;
-    response += " configured as ";
-    response += "INPUT";
-    response += "\n\0";
-    ChariotClient.print(response);
-    return;
-  }
-
-  if (mode == F("output")) {
-#if EP_DEBUG 
-    Serial.println(F("command is OUTPUT"));
-#endif
+	mode = "INPUT";
+  } else if (value  == OUTPUT) {
     pinMode(pin, OUTPUT);
+	mode = "OUTPUT";
+  } else if (value == INPUT_PULLUP) {
+    pinMode(pin, INPUT_PULLUP);
+	mode = "INPUT_PULLUP";
+  } else {
+	goto mode_error;
+  }
+  
+ #if EP_DEBUG 
+	Serial.print(F("command is "));
+	Serial.println(mode);
+#endif
 
     // Send pin response to requestor
     response = "Pin D";
     response += pin;
     response += " configured as ";
-    response += "OUTPUT";
-    response += "\n\0";
+    response += mode;
+    response += "<\n\0";
     ChariotClient.print(response);
     return;
   }
@@ -477,12 +523,62 @@ void ChariotEPClass::modeCommand() {
   Serial.print(F("Arduino remote error: invalid mode requested: "));
   Serial.println(mode);
 #endif
+mode_error:
   ChariotClient.print(F("Arduino remote error: invalid mode "));
   ChariotClient.print(mode);
+  ChariotClient.print("<\n\0");
 }
 
-/* Toggle Chariot's interrupt line 
- *  to signal request--put me in a function
+/**
+ * Parse pin number and possible value parameter from command
+ */
+ bool ChariotEPClass::pinValParse(String& command, int *pin, int *value) {
+  int slash, secondSlash;
+   
+  /**
+   * Do we have pin/value or simply pin?
+   */
+   slash = command.indexOf('/');
+   if (slash != -1) {
+       String pinStr, valStr;
+       int valStrlen;
+       
+       pinStr = valStr = command;
+       valStr.remove(0, slash+1);
+       secondSlash = valStr.indexOf('/');
+       if (secondSlash != -1) {
+          valStr.remove(secondSlash, valStr.length()-1);
+       }
+       valStrlen = valStr.length();
+       pinStr.remove(slash, pinStr.length()-1);
+       *pin = pinStr.toInt();
+       if (valStrlen > 1) {
+			if (valStr == "input") {
+				*value = INPUT;
+			} else if (valStr == "output") {
+				*value = OUTPUT;
+			} else if (valStr == "input_pullup") {
+				*value = INPUT_PULLUP;
+			} else {
+				*value = valStr.toInt();
+			}
+       } else {
+        *value = -1;
+       }
+       return true;
+   } else {
+     *pin = command.toInt();
+	 *value = -1;
+      return true;
+   }
+   
+error:
+  return false;
+}
+
+/* 
+ * Toggle Chariot's interrupt line 
+ * to signal request--put me in a function
  * Chariot will respond with "Chariot ready"
  */
 void ChariotEPClass::chariotSignal(int pin) {
@@ -493,27 +589,40 @@ void ChariotEPClass::chariotSignal(int pin) {
   interrupts();
 }
 
-void ChariotEPClass::coapResponse()
+void ChariotEPClass::chariotPrintResponse()
 { 
-  String initString = "";
+  String response = "";
+#define CHAR_AT_A_TIME
+#ifdef CHAR_AT_A_TIME
   char ch;
-  uint8_t ltSeen = 0, availChars;
-
-  while (!ChariotClient.available()) ;
+  uint8_t ltSeen = 0;
   
-  while ((availChars = ChariotClient.available()) || (ltSeen < 2)) {
-    if (availChars) {
+  while (ltSeen < 2) {
+    if (ChariotClient.available() > 0) {
       ch = (char)ChariotClient.read();
   
       if (ch != '<') {
-        initString += ch;
+        response += ch;
       }
       else {
         ltSeen++;
       }
     }
   }
-  Serial.println(initString);
+  Serial.println(response);
+#else
+	int terminator;
+	
+	while (ChariotClient.available() > 0) {
+		response = ChariotClient.readStringUntil('\n');
+		terminator = response.indexOf("<<");
+		if (terminator != -1) {
+			response.remove(terminator, 2);
+		}
+		Serial.println(response);
+	}
+#endif
+#undef CHAR_AT_A_TIME
 }
 
 /*
@@ -544,18 +653,44 @@ void ChariotEPClass::serialChariotCmd()
     }
   }
 
-  // "sys/motes" is shortest command
-  if (len >= 9) {
-    Serial.print(F("Cmd: "));
-    Serial.println(chariotLclCmd);
-    ChariotClient.print(chariotLclCmd);
-    coapResponse();
+  // Process commands
+  String Cmd;
+  if  ((chariotLclCmd == "motes") || (chariotLclCmd == "hosts") || (chariotLclCmd == "health"))
+  { 
+	Cmd = "sys/";
+	Cmd += chariotLclCmd;
+	Cmd += "<\n\0";
+	ChariotClient.print(Cmd);
+    chariotPrintResponse();
+  }
+  else if ((chariotLclCmd == "radio") || (chariotLclCmd == "temp") || (chariotLclCmd == "accel")) 
+  {
+    Cmd = "sensors/";
+	Cmd += chariotLclCmd;
+	Cmd += "<\n\0";
+	
+	ChariotClient.print(Cmd);
+    chariotPrintResponse();
+  } else if ((chariotLclCmd.startsWith("chan", 0)) || (chariotLclCmd.startsWith("txpwr", 0)) ||
+			(chariotLclCmd.startsWith("panid", 0)) || (chariotLclCmd.startsWith("panaddr", 0)))
+  {
+	Cmd = "sys/";
+	Cmd += chariotLclCmd;
+	Cmd += "<\n\0";
+	ChariotClient.print(Cmd);
+	while(ChariotClient.available() == 0) ;
+    chariotPrintResponse();
+  } else {
+	Serial.print("\"");
+	Serial.print(chariotLclCmd);
+	Serial.print("\" ");
+	Serial.println(F("not understood."));
   }
 }
 
 /*-----------------------------------------------------------------------------------------------*/
-/* There isn't a really good reason for this to be here. A separate sensors class could be used. */
-/* --although TMP275 is in the EP...
+/* There isn't a really good reason for this to be here. A separate sensors class should be used.*/
+/* --although TMP275 is in the EP...                                                             */
 /*-----------------------------------------------------------------------------------------------*/
 float ChariotEPClass::readTMP275(uint8_t units)
 {

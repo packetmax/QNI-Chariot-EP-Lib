@@ -26,7 +26,7 @@
     #define UNO_HOST    	0
     #define MEGA_DUE_HOST 	0
 	#define RX_PIN			11
-	#define TX_PIN			4
+	#define TX_PIN			12//4 -- problem using pin 4?
 	#define MAX_RESOURCES	6
 
 #elif defined(HAVE_HWSERIAL0) && !defined(HAVE_HWSERIAL1)
@@ -90,11 +90,10 @@ class ChariotEPClass
 	int createResource(const __FlashStringHelper* uri, uint8_t maxBufLen, const __FlashStringHelper* attrib);
 	
 	bool triggerResourceEvent(int handle, String& event, bool signalChariot);
-	bool triggerResourceEvent(int handle, const __FlashStringHelper* event, bool signalChariot);
 	
 	void serialChariotCmd();
 	int getIdFromURI(String& uri);
-	int setPutHandler(int handle, void (*putCallback)(String& putCmd));
+	int setPutHandler(int handle, String * (*putCallback)(String& putCmd));
 	float readTMP275(uint8_t units);
 	inline uint8_t getArduinoModel();
 	
@@ -108,19 +107,20 @@ class ChariotEPClass
 
 	String rsrcURIs[MAX_RESOURCES];
 	String rsrcATTRs[MAX_RESOURCES];
-	void (*putCallbacks[MAX_RESOURCES])(String& putCmd);
+	String * (*putCallbacks[MAX_RESOURCES])(String& putCmd);
 
 	uint8_t rsrcChariotBufSizes[MAX_RESOURCES];
 
-	void digitalCommand();
-	void analogCommand();
-	void modeCommand();
+	void digitalCommand(String& command);
+	void analogCommand(String& command);
+	void modeCommand(String& command);
+	bool pinValParse(String& command, int *pin, int *value);
 	void chariotSignal(int pin);
-	void coapResponse();
+	void chariotPrintResponse();
 };
 
 extern ChariotEPClass ChariotEP;   // the EndPoint object for Chariot
-#if defined(LEONARDO_HOST) || defined(UNO_HOST)
+#if LEONARDO_HOST==1 || UNO_HOST==1
     extern SoftwareSerial ChariotClient;
 #endif
 
