@@ -20,17 +20,28 @@
  * by George Wayne, Qualia Networks Incorporated
  */
 
-void setup() {  
- // arduino IDE/Tools/Port for console and debug:
-  Serial.begin(9600);
-  while (!Serial) {
-    // wait serial port initialization
-  }
+#define SerialMon if(debug)Serial
 
+// If using the Serial port--type an integer within 5 secs to activate.
+static bool debug = false;
+
+void setup() {  
+  // arduino IDE/Tools/Port for console and debug:
+  Serial.begin(9600);
+   while (!Serial.available() &&  millis() < 5000) ;
+  if (Serial.available()) {
+    int startupInt = Serial.read(); // Enter single char for Serial startup.
+  
+    Serial.println(F("Serial port is active"));
+    debug = true;
+    ChariotEP.enableDebugMsgs();
+  } else {
+    ChariotEP.disableDebugMsgs();
+  }
   //---Put Arduino resources on the air---
   ChariotEP.begin();
   
-  Serial.println(F("Setup complete."));
+  SerialMon.println(F("Setup complete."));
 }
 
 void loop() {
