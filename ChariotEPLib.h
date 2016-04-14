@@ -12,6 +12,7 @@
 #include <SoftwareSerial.h>
 
 #define EP_DEBUG			0
+#define SerialMon			if(debug)Serial
 
 #define UNO					1
 #define LEONARDO			2
@@ -85,6 +86,8 @@ class ChariotEPClass
     boolean begin();
 	int available();
 	void process();
+	int coapResponseGet(String& response);
+	bool pinValParse(String& command, int *pin, int *value);
 		
 	int createResource(String& uri, uint8_t maxBufLen, String& attrib);
 	int createResource(const __FlashStringHelper* uri, uint8_t maxBufLen, const __FlashStringHelper* attrib);
@@ -92,15 +95,19 @@ class ChariotEPClass
 	bool triggerResourceEvent(int handle, String& event, bool signalChariot);
 	
 	void serialChariotCmd();
+	void serialChariotCmdHelp();
 	int getIdFromURI(String& uri);
 	int setPutHandler(int handle, String * (*putCallback)(String& putCmd));
 	float readTMP275(uint8_t units);
-	inline uint8_t getArduinoModel();
+	uint8_t getArduinoModel();
+	void enableDebugMsgs();
+	void disableDebugMsgs();
 	
   private:
 	uint8_t arduinoType;
 	bool chariotAvailable;
 	uint8_t maxBufLen;
+	bool 	debug;
 
 	// Event resources--these are stored in Chariot
 	int nextRsrcId;
@@ -114,7 +121,6 @@ class ChariotEPClass
 	void digitalCommand(String& command);
 	void analogCommand(String& command);
 	void modeCommand(String& command);
-	bool pinValParse(String& command, int *pin, int *value);
 	void chariotSignal(int pin);
 	void chariotPrintResponse();
 };
