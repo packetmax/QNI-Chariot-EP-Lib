@@ -20,9 +20,12 @@ coap://chariot.c350e.local/arduino/analog?put&pin=13&val=128    -> analogWrite(2
  * by George Wayne, Qualia Networks Incorporated
  */
 
+#define SerialMon if(debug)Serial
+
 /*
  * Simple trigger state vars
  */
+static bool    triggerOk = false;
 static uint8_t triggerState = OFF;
 static bool    isTriggered = false;
 static uint8_t triggerFunc = GT;
@@ -46,25 +49,35 @@ void inline resetTriggerTime()
                                                   (millis() + triggerPeriod*1000*60); 
 }
 
+// If using the Serial port--type an integer within 5 secs to activate.
+static bool debug = false;
+
 void setup() {  
- // arduino IDE/Tools/Port for console and debug:
+  
+  // Check for availability of arduino IDE/Tools/Port for console and debug:
   Serial.begin(9600);
-  while (!Serial) {
-    // wait serial port initialization
+  while (!Serial.available() &&  millis() < 5000) ;
+  if (Serial.available()) {
+    int startupInt = Serial.read(); // Enter single char for Serial startup.
+  
+    Serial.println(F("Serial port is active"));
+    debug = true;
+    ChariotEP.enableDebugMsgs();
+  } else {
+    ChariotEP.disableDebugMsgs();
   }
 
   //---Put Arduino resources on the air---
   ChariotEP.begin();
 
   //---Create event trigger---
-  if (triggerCreate()) {
-    Serial.println(F("Setup complete."));
+  delay(1000); // Give Chariot delay to get initialized
+  if (triggerOk = triggerCreate()) {
+    SerialMon.println(F("Setup complete."));
+    resetTriggerTime();
   } else {
-    Serial.println(F("Setup failed-trigger not created. Exiting..."));
-    exit(-1);
+    SerialMon.println(F("Setup failed-trigger not created. Exiting..."));
   }
-
-  resetTriggerTime();
 }
 
 void loop() {
@@ -80,14 +93,14 @@ void loop() {
    *  Filter your own inputs first--pass everthing else here.
    *   --try typing 'sys/help' into the Serial window
    */
-  if (Serial.available()) {
+  if (debug && Serial.available()) {
     ChariotEP.serialChariotCmd();
   }
 
   /* 
    *  Examine trigger
    */
-  if (millis() > triggerChkTime) {
+  if (triggerOk && (millis() > triggerChkTime)) {
     resetTriggerTime();
     if (triggerCheck()) {
       String triggeredVal = "{\"ID\":\"Trigger\",\"Triggered\":\"Yes\",\"State\":\"Off\"}";;
@@ -112,13 +125,13 @@ bool triggerCreate()
     if (ChariotEP.triggerResourceEvent(eventHandle, eventVal, true)){     // set its initial condition (JSON)
       ChariotEP.setPutHandler(eventHandle, triggerPutCallback);           // set RESTful PUT handler
     } else {
-      Serial.println(F("Error creating trigger!"));
+      SerialMon.println(F("Error creating trigger!"));
       return false;
     }
     return true;
   } 
   
-  Serial.println(F("Could not create resource!"));
+  SerialMon.println(F("Could not create resource!"));
   return false;
 }
 
