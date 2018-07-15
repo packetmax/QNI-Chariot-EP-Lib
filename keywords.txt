@@ -6,43 +6,43 @@
 # Datatypes (KEYWORD1)
 #######################################
 
-ChariotEPClass			KEYWORD1
-ChariotClient			KEYWORD1
+ChariotEPClass	KEYWORD1
+ChariotClient	KEYWORD1
 
 #######################################
 # Methods and Functions (KEYWORD2)
 #######################################
 
-begin					KEYWORD2
-process					KEYWORD2
-available				KEYWORD2
-createResource			KEYWORD2
+begin	KEYWORD2
+process	KEYWORD2
+available	KEYWORD2
+createResource	KEYWORD2
 triggerResourceEvent	KEYWORD2
-serialChariotCmd		KEYWORD2
-getIdFromURI			KEYWORD2
-setPutHandler			KEYWORD2
-readTMP275				KEYWORD2
-getArduinoModel			KEYWORD2
+serialChariotCmd	KEYWORD2
+getIdFromURI	KEYWORD2
+setPutHandler	KEYWORD2
+readTMP275	KEYWORD2
+getArduinoModel	KEYWORD2
 
 #######################################
 # Constants (LITERAL1)
 #######################################
 
-RSRC_EVENT_INT_PIN  	LITERAL1
-CHARIOT_STATE_PIN   	LITERAL1
-MAX_BUFLEN				LITERAL1
-TMP275_ADDRESS			LITERAL1
-FAHRENHEIT    			LITERAL1
-CELSIUS       			LITERAL1
-KELVIN        			LITERAL1
-JSON          			LITERAL1
-LT            			LITERAL1
-GT            			LITERAL1
-EQ            			LITERAL1
-ON            			LITERAL1
-OFF           			LITERAL1
-LF            			LITERAL1
-CR            			LITERAL1
+RSRC_EVENT_INT_PIN	LITERAL1
+CHARIOT_STATE_PIN	LITERAL1
+MAX_BUFLEN	LITERAL1
+TMP275_ADDRESS	LITERAL1
+FAHRENHEIT	LITERAL1
+CELSIUS	LITERAL1
+KELVIN	LITERAL1
+JSON	LITERAL1
+LT	LITERAL1
+GT	LITERAL1
+EQ	LITERAL1
+ON	LITERAL1
+OFF	LITERAL1
+LF	LITERAL1
+CR	LITERAL1
 
-#define MINUTES       			1
-#define SECONDS       			2
+#define MINUTES	1
+#define SECONDS	2
